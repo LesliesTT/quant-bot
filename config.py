@@ -3,7 +3,7 @@ import os
 
 BINANCE_API_KEY    = os.getenv("BINANCE_API_KEY",    "8A9jCVy39mlTlPZPfYi3AuXjstRrzALqAAqokCBfhkS1GIczs12eZLQUvZw70Zaw")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY", "oOmgc18vPrK5CA3fRaea9BvI4ZWgIp8W55BSWQWtk61UpB9whZBmGtFUBNpzdwqH")
-BINANCE_MARKET_BASE = "https://api.binance.com"
+BINANCE_MARKET_BASE = "https://data-api.binance.vision"
 BINANCE_TRADE_BASE  = "https://testnet.binance.vision"
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "YOUR_DISCORD_WEBHOOK_URL_HERE")
 
