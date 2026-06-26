@@ -2,8 +2,8 @@ name: 量化机器人 v1
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
-  workflow_dispatch:
+    - cron: '0 * * * *'   # 每小时整点运行
+  workflow_dispatch:        # 支持手动触发
 
 jobs:
   run-quant-bot:
@@ -23,11 +23,12 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: 恢复持仓状态缓存
-        uses: actions/cache/restore@v4
+        uses: actions/cache@v4
         with:
-          path: position_state.json
-          key: position-state-never-match
-          restore-keys: position-state-
+          path: positions.json
+          key: quant-positions-${{ github.run_id }}
+          restore-keys: |
+            quant-positions-
 
       - name: 运行量化机器人
         env:
@@ -37,11 +38,11 @@ jobs:
         run: python main.py --once
 
       - name: 保存持仓状态缓存
-        uses: actions/cache/save@v4
         if: always()
+        uses: actions/cache@v4
         with:
-          path: position_state.json
-          key: position-state-${{ github.run_id }}
+          path: positions.json
+          key: quant-positions-${{ github.run_id }}
 
   daily-summary:
     runs-on: ubuntu-latest
@@ -61,11 +62,12 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: 恢复持仓状态缓存
-        uses: actions/cache/restore@v4
+        uses: actions/cache@v4
         with:
-          path: position_state.json
-          key: position-state-never-match
-          restore-keys: position-state-
+          path: positions.json
+          key: quant-positions-${{ github.run_id }}
+          restore-keys: |
+            quant-positions-
 
       - name: 发送每日汇报
         env:
