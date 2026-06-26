@@ -31,7 +31,8 @@ def _send(payload: dict) -> None:
 
 
 def _now_str() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    """Discord 要求 ISO 8601 格式"""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def notify_open(pos: "Position", state: "State") -> None:
