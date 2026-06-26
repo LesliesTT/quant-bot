@@ -1,59 +1,29 @@
 from __future__ import annotations
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
+BINANCE_API_KEY    = os.getenv("BINANCE_API_KEY",    "8A9jCVy39mlTlPZPfYi3AuXjstRrzALqAAqokCBfhkS1GIczs12eZLQUvZw70Zaw")
+BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY", "oOmgc18vPrK5CA3fRaea9BvI4ZWgIp8W55BSWQWtk61UpB9whZBmGtFUBNpzdwqH")
+BINANCE_MARKET_BASE = "https://api.binance.com"
+BINANCE_TRADE_BASE  = "https://testnet.binance.vision"
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "YOUR_DISCORD_WEBHOOK_URL_HERE")
 
-# ── Discord ─────────────────────────────────────────────────────────────────
-DISCORD_WEBHOOK_URL: str = os.getenv("DISCORD_WEBHOOK_URL", "YOUR_DISCORD_WEBHOOK_URL_HERE")
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
 
-# ── 监控币种 ─────────────────────────────────────────────────────────────────
-# 注意：XAGUSDT/NAS100USDT/CLUSDT 等可能仅在 Binance Futures 有效，
-#       代码会在运行时自动验证并跳过不可用的币种。
-SYMBOLS: list[str] = [
-    "BTCUSDT",
-    "ETHUSDT",
-    "SOLUSDT",
-    "BNBUSDT",
-    "DOGEUSDT",
-    "XAUUSDT",
-    "XAGUSDT",
-    "HYPEUSDT",
-    "CLUSDT",
-    "MUSDT",
-    "SPCXUSDT",
-    "NAS100USDT",
-]
+INITIAL_CAPITAL          = 1000.0
+RISK_PER_TRADE_PCT       = 0.015
+MAX_CONCURRENT_POSITIONS = 3
+DAILY_LOSS_LIMIT_PCT     = 0.03
+ATR_PERIOD               = 14
+ATR_SL_MULTIPLIER        = 1.5
+TP1_RISK_RATIO           = 1.5
+TP2_RISK_RATIO           = 3.0
+TP1_CLOSE_RATIO          = 0.5
 
-# ── 时间框架 ─────────────────────────────────────────────────────────────────
-TIMEFRAMES: dict[str, dict] = {
-    "1h":  {"interval": "1h",  "limit": 250},
-    "4h":  {"interval": "4h",  "limit": 200},
-    "1d":  {"interval": "1d",  "limit": 100},
-}
+EMA_FAST   = 20
+EMA_SLOW   = 50
+EMA_TREND  = 200
+RSI_PERIOD = 14
+RSI_MIN    = 40
+RSI_MAX    = 70
 
-# ── 信号设置 ─────────────────────────────────────────────────────────────────
-MIN_STAR_RATING: int = 3          # 最低星级才推送（1-5 星）
-SCAN_INTERVAL_MINUTES: int = 60   # 本地运行扫描间隔
-
-# ── 技术指标参数 ──────────────────────────────────────────────────────────────
-EMA_SHORT: int          = 20       # EMA20
-EMA_VEGAS_FAST: int     = 144      # Vegas 通道快线
-EMA_VEGAS_SLOW: int     = 169      # Vegas 通道慢线
-RSI_PERIOD: int         = 14
-ATR_PERIOD: int         = 14
-VOLUME_MA_PERIOD: int   = 20
-
-# ATR 止损/止盈倍数
-ATR_SL_MULT: float = 1.5
-ATR_TP1_MULT: float = 2.0
-ATR_TP2_MULT: float = 3.5
-
-# ICT 参数
-ORDER_BLOCK_LOOKBACK: int         = 60    # Order Block 回溯K线数
-FVG_LOOKBACK: int                 = 40    # Fair Value Gap 回溯K线数
-BREAKOUT_VOLUME_MULT: float       = 1.5   # 真实突破需要成交量倍数
-LIQUIDITY_SWEEP_TOLERANCE: float  = 0.003 # 流动性扫描容忍度 0.3%
-
-# 多时间框架对齐奖励分
-MTF_BONUS: int = 2
+SCAN_INTERVAL_MINUTES = 15
