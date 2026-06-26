@@ -14,7 +14,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from analyzer import analyze
+from strategy import analyze
 from config import SCAN_INTERVAL_MINUTES, SYMBOLS
 from discord_notifier import send_signal, send_startup_message, send_summary
 from market_data import fetch_multi_tf, fetch_ticker, validate_symbol
