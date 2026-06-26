@@ -83,16 +83,21 @@ def enable_hedge_mode() -> bool:
             data=body,
             timeout=15,
         )
-        data = resp.json()
+        # 安全解析响应（防止非JSON响应导致崩溃）
+        try:
+            data = resp.json()
+        except Exception:
+            logger.warning("对冲模式响应非JSON (HTTP %s)，继续运行", resp.status_code)
+            return False
         ret = data.get("retCode", -1)
         if ret == 0:
             logger.info("✅ 对冲模式已启用")
             return True
-        elif ret == 110025:  # 已经是对冲模式
+        elif ret in (110025, 110026):  # 已经是对冲模式
             logger.info("ℹ️ 对冲模式已开启（无需重复设置）")
             return True
         else:
-            logger.warning("对冲模式设置: %s", data.get("retMsg"))
+            logger.warning("对冲模式设置返回: retCode=%s msg=%s", ret, data.get("retMsg"))
             return False
     except Exception as e:
         logger.error("启用对冲模式失败: %s", e)
