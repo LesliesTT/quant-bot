@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 """
-量化趋势跟踪机器人 v1
+量化趋势跟踪机器人 v2
 ────────────────────────────────────────────────────────
 策略：多时间框架趋势跟踪（日线 + 4H + 1H 三重共振）
+方向：双向交易（做多 LONG + 做空 SHORT）
 风控：单笔最大亏损1.5% · 日亏损≤3%自动暂停 · ATR动态止损
 止盈：TP1=1.5R平50% → 止损移至成本 → TP2=3.0R清仓
-交易所：Binance 现货测试网（testnet.binance.vision）
+交易所：Bybit 合约测试网（api-testnet.bybit.com）
 ────────────────────────────────────────────────────────
 """
 
@@ -19,11 +20,16 @@ from datetime import datetime, timezone
 from config import (
     SYMBOLS, SCAN_INTERVAL_MINUTES,
     MAX_CONCURRENT_POSITIONS, DAILY_LOSS_LIMIT_PCT,
-    TP1_CLOSE_RATIO, INITIAL_CAPITAL,
+    TP1_CLOSE_RATIO, INITIAL_CAPITAL, LEVERAGE,
 )
 from market_data import fetch_klines, fetch_ticker_price
 from strategy import analyze
-from trade_executor import place_market_buy, place_market_sell, get_usdt_balance, _avg_fill_price
+from trade_executor import (
+    enable_hedge_mode, setup_symbol,
+    place_market_long, place_market_short,
+    close_long, close_short,
+    get_usdt_balance, _avg_fill_price,
+)
 from position_manager import (
     State, Position,
     load_state, save_state,
@@ -34,7 +40,7 @@ from discord_notifier import (
     notify_startup, notify_daily_summary,
 )
 
-# ── 日志配置 ─────────────────────────────────────────────────────────────────
+# ── 日志配置 ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-7s  %(message)s",
@@ -47,63 +53,75 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ── 持仓管理（止损 & 止盈）──────────────────────────────────────────────────
+# ── PNL计算 ───────────────────────────────────────────────────────────────────
+
+def _pnl(pos: Position, close_price: float, qty: float) -> float:
+    """计算盈亏（含杠杆）"""
+    if pos.side == "LONG":
+        return (close_price - pos.entry_price) * qty * LEVERAGE
+    else:  # SHORT
+        return (pos.entry_price - close_price) * qty * LEVERAGE
+
+
+# ── 持仓管理（止损 & 止盈）───────────────────────────────────────────────────
 
 def manage_open_positions(state: State) -> State:
     """检查所有持仓，触发止损/止盈则执行"""
     for sym in list(state.positions.keys()):
-        pos = state.positions[sym]
+        pos   = state.positions[sym]
         price = fetch_ticker_price(sym)
         if price is None:
             logger.warning("  %s 价格获取失败，跳过检查", sym)
             continue
 
-        sl_dist  = (price - pos.sl)  / pos.entry_price * 100
-        tp1_dist = (pos.tp1 - price) / pos.entry_price * 100
-        tp2_dist = (pos.tp2 - price) / pos.entry_price * 100
+        is_long  = pos.side == "LONG"
+        sl_dist  = ((price - pos.sl) / pos.entry_price * 100) if is_long else ((pos.sl - price) / pos.entry_price * 100)
+        tp1_dist = ((pos.tp1 - price) / pos.entry_price * 100) if is_long else ((price - pos.tp1) / pos.entry_price * 100)
 
         logger.info(
-            "  持仓 %s | 现价=%.4f | SL=%.4f(%.1f%%) | TP1=%.4f(%.1f%%) | TP2=%.4f(%.1f%%)",
-            sym, price,
-            pos.sl, sl_dist, pos.tp1, tp1_dist, pos.tp2, tp2_dist,
+            "  持仓 %s [%s] | 现价=%.4f | SL=%.4f(%.1f%%) | TP1=%.4f(%.1f%%) | TP2=%.4f",
+            sym, pos.side, price, pos.sl, sl_dist, pos.tp1, tp1_dist, pos.tp2,
         )
 
         # ── 触发止损 ────────────────────────────────────────────
-        if price <= pos.sl:
-            logger.info("  🛡 %s 触发止损！现价=%.4f  SL=%.4f", sym, price, pos.sl)
-            order = place_market_sell(sym, pos.quantity_remaining)
+        sl_triggered = (price <= pos.sl) if is_long else (price >= pos.sl)
+        if sl_triggered:
+            logger.info("  🛡 %s [%s] 触发止损！现价=%.4f  SL=%.4f", sym, pos.side, price, pos.sl)
+            order = close_long(sym, pos.quantity_remaining) if is_long else close_short(sym, pos.quantity_remaining)
             if order:
                 actual_price, actual_qty = _avg_fill_price(order, price)
-                pnl = (actual_price - pos.entry_price) * actual_qty
+                pnl = _pnl(pos, actual_price, actual_qty)
                 record_close(state, pnl, win=False)
                 notify_close(pos, actual_price, actual_qty, "止损 🛡", pnl, state)
                 del state.positions[sym]
                 logger.info("  ❌ %s 止损平仓 盈亏=%.2f USDT", sym, pnl)
             continue
 
-        # ── 触发 TP1（未触发时检查）────────────────────────────
-        if not pos.tp1_hit and price >= pos.tp1:
+        # ── 触发 TP1 ─────────────────────────────────────────────
+        tp1_triggered = (price >= pos.tp1) if is_long else (price <= pos.tp1)
+        if not pos.tp1_hit and tp1_triggered:
             close_qty = pos.quantity * TP1_CLOSE_RATIO
-            logger.info("  🎯 %s 触发TP1！现价=%.4f  TP1=%.4f", sym, price, pos.tp1)
-            order = place_market_sell(sym, close_qty)
+            logger.info("  🎯 %s [%s] 触发TP1！现价=%.4f  TP1=%.4f", sym, pos.side, price, pos.tp1)
+            order = close_long(sym, close_qty) if is_long else close_short(sym, close_qty)
             if order:
                 actual_price, actual_qty = _avg_fill_price(order, price)
-                pnl = (actual_price - pos.entry_price) * actual_qty
+                pnl = _pnl(pos, actual_price, actual_qty)
                 record_close(state, pnl, win=True)
                 notify_close(pos, actual_price, actual_qty, "TP1 🎯", pnl, state)
-                pos.tp1_hit           = True
+                pos.tp1_hit            = True
                 pos.quantity_remaining -= actual_qty
-                pos.sl                = pos.entry_price
+                pos.sl                 = pos.entry_price   # 止损移至成本
                 logger.info("  ✅ %s TP1平仓50%% 盈亏=%.2f USDT  止损移至成本 %.4f", sym, pnl, pos.sl)
             continue
 
-        # ── 触发 TP2（TP1已触发后检查）─────────────────────────
-        if pos.tp1_hit and price >= pos.tp2:
-            logger.info("  🎯 %s 触发TP2！现价=%.4f  TP2=%.4f", sym, price, pos.tp2)
-            order = place_market_sell(sym, pos.quantity_remaining)
+        # ── 触发 TP2 ─────────────────────────────────────────────
+        tp2_triggered = (price >= pos.tp2) if is_long else (price <= pos.tp2)
+        if pos.tp1_hit and tp2_triggered:
+            logger.info("  🎯 %s [%s] 触发TP2！现价=%.4f  TP2=%.4f", sym, pos.side, price, pos.tp2)
+            order = close_long(sym, pos.quantity_remaining) if is_long else close_short(sym, pos.quantity_remaining)
             if order:
                 actual_price, actual_qty = _avg_fill_price(order, price)
-                pnl = (actual_price - pos.entry_price) * actual_qty
+                pnl = _pnl(pos, actual_price, actual_qty)
                 record_close(state, pnl, win=True)
                 notify_close(pos, actual_price, actual_qty, "TP2 🎯", pnl, state)
                 del state.positions[sym]
@@ -112,7 +130,7 @@ def manage_open_positions(state: State) -> State:
     return state
 
 
-# ── 信号扫描 & 开仓 ──────────────────────────────────────────────────────────
+# ── 信号扫描 & 开仓 ───────────────────────────────────────────────────────────
 
 def scan_and_open(state: State) -> State:
     """扫描所有品种，满足条件则开仓"""
@@ -143,11 +161,21 @@ def scan_and_open(state: State) -> State:
             for r in sig.reasons:
                 logger.info("    %s", r)
 
-            if sig.direction != "BUY":
+            if sig.direction == "NEUTRAL":
                 continue
 
-            logger.info("  🛒 %s 发出BUY信号，准备开仓  预算=$%.2f", sym, sig.position_usdt)
-            order = place_market_buy(sym, sig.position_usdt)
+            # ── 初始化合约设置 ────────────────────────────────────
+            setup_symbol(sym)
+
+            if sig.direction == "BUY":
+                logger.info("  🟢 %s 发出做多信号，准备开多仓  保证金=$%.2f", sym, sig.position_usdt)
+                order = place_market_long(sym, sig.position_usdt)
+                side  = "LONG"
+            else:  # SELL
+                logger.info("  🔴 %s 发出做空信号，准备开空仓  保证金=$%.2f", sym, sig.position_usdt)
+                order = place_market_short(sym, sig.position_usdt)
+                side  = "SHORT"
+
             if order is None:
                 logger.error("  %s 下单失败", sym)
                 continue
@@ -159,6 +187,7 @@ def scan_and_open(state: State) -> State:
 
             pos = Position(
                 symbol             = sym,
+                side               = side,
                 entry_price        = actual_price,
                 quantity           = actual_qty,
                 quantity_remaining = actual_qty,
@@ -167,14 +196,14 @@ def scan_and_open(state: State) -> State:
                 tp2                = sig.tp2,
                 tp1_hit            = False,
                 entry_time         = datetime.now(timezone.utc).isoformat(),
-                entry_usdt         = actual_price * actual_qty,
+                entry_usdt         = sig.position_usdt,
             )
             state.positions[sym] = pos
             state.daily_stats.trades_opened += 1
             notify_open(pos, state)
             logger.info(
-                "  ✅ %s 开仓成功  价格=%.4f  数量=%.6f  SL=%.4f  TP1=%.4f  TP2=%.4f",
-                sym, actual_price, actual_qty, sig.sl, sig.tp1, sig.tp2,
+                "  ✅ %s [%s] 开仓成功  价格=%.4f  数量=%.6f  SL=%.4f  TP1=%.4f  TP2=%.4f",
+                sym, side, actual_price, actual_qty, sig.sl, sig.tp1, sig.tp2,
             )
             time.sleep(0.5)
 
@@ -184,11 +213,9 @@ def scan_and_open(state: State) -> State:
     return state
 
 
-# ── 单次运行逻辑 ─────────────────────────────────────────────────────────────
+# ── 单次运行逻辑 ──────────────────────────────────────────────────────────────
 
 def run_once(state: State) -> State:
-    """GitHub Actions 每次触发执行的核心逻辑"""
-
     loss_pct = daily_loss_pct(state)
     if loss_pct <= -DAILY_LOSS_LIMIT_PCT:
         if not state.trading_paused_today:
@@ -202,22 +229,24 @@ def run_once(state: State) -> State:
 
     state = manage_open_positions(state)
     state = scan_and_open(state)
-
     return state
 
 
-# ── 入口 ─────────────────────────────────────────────────────────────────────
+# ── 入口 ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="量化趋势跟踪机器人 v1")
+    parser = argparse.ArgumentParser(description="量化趋势跟踪机器人 v2")
     parser.add_argument("--once",    action="store_true", help="单次运行（GitHub Actions模式）")
     parser.add_argument("--summary", action="store_true", help="发送每日汇报到Discord")
     args = parser.parse_args()
 
     logger.info("══════════════════════════════════════════════")
-    logger.info("  量化趋势跟踪机器人 v1 启动")
-    logger.info("  策略：多时间框架趋势 | 测试网现货 | 风控1.5%%")
+    logger.info("  量化趋势跟踪机器人 v2 启动")
+    logger.info("  策略：多时间框架趋势 | 合约模拟盘 | 双向交易 | %dx杠杆", LEVERAGE)
     logger.info("══════════════════════════════════════════════")
+
+    # 初始化：启用对冲模式（双向持仓）
+    enable_hedge_mode()
 
     state = load_state()
     cap   = current_capital(state)
@@ -241,9 +270,8 @@ def main() -> None:
                 save_state(state)
             except Exception as e:
                 logger.error("运行异常: %s", e, exc_info=True)
-            next_scan = SCAN_INTERVAL_MINUTES
-            logger.info("💤 下次扫描：%d 分钟后", next_scan)
-            time.sleep(next_scan * 60)
+            logger.info("💤 下次扫描：%d 分钟后", SCAN_INTERVAL_MINUTES)
+            time.sleep(SCAN_INTERVAL_MINUTES * 60)
 
 
 if __name__ == "__main__":
