@@ -1,68 +1,33 @@
 from __future__ import annotations
 
 """
-Bybit 测试网合约下单执行器
-使用 HMAC-SHA256 签名，Bybit API v5
-支持双向持仓（对冲模式）：positionIdx=1(做多) / positionIdx=2(做空)
+纸面交易执行器（Paper Trading）
+────────────────────────────────────────────────────────
+使用真实行情价格模拟开仓/平仓，不调用任何交易所 API
+所有盈亏基于真实市场价格计算，结果与真实合约交易一致
+────────────────────────────────────────────────────────
 """
 
-import hashlib
-import hmac
 import logging
 import math
-import time
 
-import requests
-
-from config import BYBIT_API_KEY, BYBIT_SECRET_KEY, BYBIT_TRADE_BASE, BYBIT_MARKET_BASE, LEVERAGE
-from market_data import fetch_lot_size, fetch_ticker_price
+from config import LEVERAGE
+from market_data import fetch_ticker_price
 
 logger = logging.getLogger(__name__)
 
-RECV_WINDOW = "5000"
-
-
-# ── 签名 ──────────────────────────────────────────────────────────────────────
-
-def _sign(timestamp: str, payload: str) -> str:
-    """Bybit签名: timestamp + api_key + recv_window + payload"""
-    msg = timestamp + BYBIT_API_KEY + RECV_WINDOW + payload
-    return hmac.new(
-        BYBIT_SECRET_KEY.encode("utf-8"),
-        msg.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-
-
-def _headers(timestamp: str, signature: str) -> dict:
-    return {
-        "X-BAPI-API-KEY":      BYBIT_API_KEY,
-        "X-BAPI-SIGN":         signature,
-        "X-BAPI-SIGN-ALGO":    "HmacSHA256",
-        "X-BAPI-TIMESTAMP":    timestamp,
-        "X-BAPI-RECV-WINDOW":  RECV_WINDOW,
-        "Content-Type":        "application/json",
-    }
-
-
-def _get_headers(params: dict) -> dict:
-    """GET请求签名（payload为查询字符串）"""
-    ts = str(int(time.time() * 1000))
-    from urllib.parse import urlencode
-    payload = urlencode(params)
-    sig = _sign(ts, payload)
-    return _headers(ts, sig)
-
-
-def _post_headers(body: str) -> dict:
-    """POST请求签名（payload为JSON字符串）"""
-    ts = str(int(time.time() * 1000))
-    sig = _sign(ts, body)
-    return _headers(ts, sig)
+# 各品种合约规格（固定值，无需实时查询）
+_LOT_SPECS: dict[str, tuple[float, float, int]] = {
+    "BTCUSDT":  (0.001, 0.001, 3),
+    "ETHUSDT":  (0.01,  0.01,  2),
+    "BNBUSDT":  (0.01,  0.01,  2),
+    "SOLUSDT":  (0.1,   0.1,   1),
+    "XRPUSDT":  (1.0,   1.0,   0),
+}
+_DEFAULT_LOT = (0.01, 0.01, 2)
 
 
 def _floor(value: float, step: float) -> float:
-    """向下取整到步长精度"""
     if step <= 0:
         return value
     precision = max(0, int(round(-math.log10(step))))
@@ -70,165 +35,95 @@ def _floor(value: float, step: float) -> float:
     return math.floor(value * factor) / factor
 
 
-# ── 初始化设置 ────────────────────────────────────────────────────────────────
+def fetch_lot_size(symbol: str) -> tuple[float, float, int]:
+    return _LOT_SPECS.get(symbol, _DEFAULT_LOT)
+
+
+# ── 初始化（纸面交易无需实际设置）────────────────────────────────────────────
 
 def enable_hedge_mode() -> bool:
-    """启用对冲模式（双向持仓），允许同时持有多空"""
-    import json
-    body = json.dumps({"category": "linear", "mode": 3})
-    try:
-        resp = requests.post(
-            f"{BYBIT_TRADE_BASE}/v5/position/switch-mode",
-            headers=_post_headers(body),
-            data=body,
-            timeout=15,
-        )
-        # 安全解析响应（防止非JSON响应导致崩溃）
-        try:
-            data = resp.json()
-        except Exception:
-            logger.warning("对冲模式响应非JSON (HTTP %s)，继续运行", resp.status_code)
-            return False
-        ret = data.get("retCode", -1)
-        if ret == 0:
-            logger.info("✅ 对冲模式已启用")
-            return True
-        elif ret in (110025, 110026):  # 已经是对冲模式
-            logger.info("ℹ️ 对冲模式已开启（无需重复设置）")
-            return True
-        else:
-            logger.warning("对冲模式设置返回: retCode=%s msg=%s", ret, data.get("retMsg"))
-            return False
-    except Exception as e:
-        logger.error("启用对冲模式失败: %s", e)
-        return False
+    logger.info("✅ [纸面交易] 对冲模式已启用（模拟）")
+    return True
 
 
 def setup_symbol(symbol: str) -> bool:
-    """设置杠杆（全仓模式）"""
-    import json
-    body = json.dumps({
-        "category":     "linear",
-        "symbol":       symbol,
-        "buyLeverage":  str(LEVERAGE),
-        "sellLeverage": str(LEVERAGE),
-    })
-    try:
-        resp = requests.post(
-            f"{BYBIT_TRADE_BASE}/v5/position/set-leverage",
-            headers=_post_headers(body),
-            data=body,
-            timeout=15,
-        )
-        data = resp.json()
-        ret = data.get("retCode", -1)
-        if ret in (0, 110043):  # 0=成功, 110043=杠杆未改变
-            logger.info("✅ %s 杠杆已设置为 %dx", symbol, LEVERAGE)
-            return True
-        else:
-            logger.warning("%s 杠杆设置失败: %s", symbol, data.get("retMsg"))
-            return False
-    except Exception as e:
-        logger.error("%s 杠杆设置异常: %s", symbol, e)
-        return False
+    logger.info("✅ [纸面交易] %s 杠杆已设置为 %dx（模拟）", symbol, LEVERAGE)
+    return True
 
-
-# ── 账户查询 ──────────────────────────────────────────────────────────────────
 
 def get_usdt_balance() -> float:
-    """查询测试网USDT合约余额"""
-    params = {"accountType": "CONTRACT", "coin": "USDT"}
-    try:
-        resp = requests.get(
-            f"{BYBIT_TRADE_BASE}/v5/account/wallet-balance",
-            headers=_get_headers(params),
-            params=params,
-            timeout=15,
-        )
-        data = resp.json()
-        if data.get("retCode") != 0:
-            logger.error("查询余额失败: %s", data.get("retMsg"))
-            return 0.0
-        for coin in data["result"]["list"][0].get("coin", []):
-            if coin["coin"] == "USDT":
-                return float(coin.get("walletBalance", 0))
-        return 0.0
-    except Exception as e:
-        logger.error("查询账户余额失败: %s", e)
-        return 0.0
+    """纸面交易余额由 position_manager 的 current_capital 管理"""
+    return 0.0
 
 
-# ── 下单 ──────────────────────────────────────────────────────────────────────
+# ── 模拟下单 ──────────────────────────────────────────────────────────────────
 
-def _place_order(symbol: str, side: str, qty: float, position_idx: int) -> dict | None:
-    """内部下单函数"""
-    import json
-    min_qty, step_size, qty_prec = fetch_lot_size(symbol)
-    quantity = _floor(qty, step_size)
-
-    if quantity < min_qty:
-        logger.warning("%s 计算数量 %.6f < 最小值 %.6f", symbol, quantity, min_qty)
-        return None
-
-    body = json.dumps({
-        "category":    "linear",
-        "symbol":      symbol,
-        "side":        side,
-        "orderType":   "Market",
-        "qty":         f"{quantity:.{qty_prec}f}",
-        "positionIdx": position_idx,
-        "timeInForce": "IOC",
-    })
-
-    try:
-        resp = requests.post(
-            f"{BYBIT_TRADE_BASE}/v5/order/create",
-            headers=_post_headers(body),
-            data=body,
-            timeout=15,
-        )
-        data = resp.json()
-        if data.get("retCode") == 0:
-            order_id = data["result"].get("orderId", "")
-            logger.info("✅ 下单成功: %s %s qty=%.6f orderId=%s", side, symbol, quantity, order_id)
-            return {"orderId": order_id, "qty": quantity, "side": side, "symbol": symbol}
-        else:
-            logger.error("下单失败 %s %s: %s", side, symbol, data.get("retMsg"))
-            return None
-    except Exception as e:
-        logger.error("下单异常 %s %s: %s", side, symbol, e)
-        return None
-
-
-def place_market_long(symbol: str, usdt_amount: float) -> dict | None:
-    """开多仓：市价买入（positionIdx=1）"""
+def _simulate_order(symbol: str, side: str, usdt_amount: float) -> dict | None:
+    """模拟市价开仓，返回成交信息"""
     price = fetch_ticker_price(symbol)
     if not price:
+        logger.error("[纸面交易] %s 获取价格失败，跳过", symbol)
         return None
-    qty = (usdt_amount * LEVERAGE) / price
-    return _place_order(symbol, "Buy", qty, position_idx=1)
+
+    min_qty, step_size, qty_prec = fetch_lot_size(symbol)
+    # 名义仓位 = 保证金 × 杠杆
+    raw_qty  = (usdt_amount * LEVERAGE) / price
+    quantity = _floor(raw_qty, step_size)
+
+    if quantity < min_qty:
+        logger.warning("[纸面交易] %s 计算数量 %.6f < 最小值 %.6f", symbol, quantity, min_qty)
+        return None
+
+    logger.info(
+        "📝 [纸面交易] %s %s 模拟成交  价格=%.4f  数量=%.{prec}f  保证金=$%.2f  名义=$%.2f".format(prec=qty_prec),
+        symbol, side, price, quantity, usdt_amount, usdt_amount * LEVERAGE,
+    )
+    return {"qty": quantity, "price": price, "side": side, "symbol": symbol, "paper": True}
+
+
+def _simulate_close(symbol: str, side: str, quantity: float) -> dict | None:
+    """模拟市价平仓"""
+    price = fetch_ticker_price(symbol)
+    if not price:
+        logger.error("[纸面交易] %s 获取平仓价格失败", symbol)
+        return None
+
+    _, step_size, qty_prec = fetch_lot_size(symbol)
+    quantity = _floor(quantity, step_size)
+
+    logger.info(
+        "📝 [纸面交易] %s %s 模拟平仓  价格=%.4f  数量=%.{prec}f".format(prec=qty_prec),
+        symbol, side, price, quantity,
+    )
+    return {"qty": quantity, "price": price, "side": side, "symbol": symbol, "paper": True}
+
+
+# ── 开仓接口 ──────────────────────────────────────────────────────────────────
+
+def place_market_long(symbol: str, usdt_amount: float) -> dict | None:
+    """模拟开多仓"""
+    return _simulate_order(symbol, "Buy", usdt_amount)
 
 
 def place_market_short(symbol: str, usdt_amount: float) -> dict | None:
-    """开空仓：市价卖出（positionIdx=2）"""
-    price = fetch_ticker_price(symbol)
-    if not price:
-        return None
-    qty = (usdt_amount * LEVERAGE) / price
-    return _place_order(symbol, "Sell", qty, position_idx=2)
+    """模拟开空仓"""
+    return _simulate_order(symbol, "Sell", usdt_amount)
 
 
 def close_long(symbol: str, quantity: float) -> dict | None:
-    """平多仓：卖出（positionIdx=1）"""
-    return _place_order(symbol, "Sell", quantity, position_idx=1)
+    """模拟平多仓"""
+    return _simulate_close(symbol, "Sell", quantity)
 
 
 def close_short(symbol: str, quantity: float) -> dict | None:
-    """平空仓：买入（positionIdx=2）"""
-    return _place_order(symbol, "Buy", quantity, position_idx=2)
+    """模拟平空仓"""
+    return _simulate_close(symbol, "Buy", quantity)
 
+
+# ── 成交价提取 ────────────────────────────────────────────────────────────────
 
 def _avg_fill_price(order: dict, fallback: float) -> tuple[float, float]:
-    """从订单提取成交均价和数量（Bybit直接返回qty）"""
-    qty = float(order.get("qty", 0))
-    return fallback, qty
+    """从模拟订单提取成交价格和数量"""
+    price = float(order.get("price", fallback))
+    qty   = float(order.get("qty",   0))
+    return price, qty
