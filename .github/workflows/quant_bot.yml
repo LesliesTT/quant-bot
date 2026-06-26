@@ -1,0 +1,35 @@
+name: 量化机器人 v1
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  run-quant-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - name: 恢复持仓状态
+        uses: actions/cache/restore@v4
+        with:
+          path: position_state.json
+          key: position-state-never-match
+          restore-keys: position-state-
+      - name: 运行量化机器人
+        env:
+          BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
+          BINANCE_SECRET_KEY: ${{ secrets.BINANCE_SECRET_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python main.py --once
+      - name: 保存持仓状态
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: position_state.json
+          key: position-state-${{ github.run_id }}
