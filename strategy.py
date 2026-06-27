@@ -143,7 +143,7 @@ def analyze(
 
     long_key_ok = (
         day_above_200 and day_ema_align
-        and h4_ema_bull and h4_macd_cross
+        and h4_ema_bull
         and h1_rsi_long_ok and h1_price_above_ema20
     )
 
@@ -186,7 +186,7 @@ def analyze(
 
     short_key_ok = (
         day_below_200 and day_ema_bear
-        and h4_ema_bear and h4_macd_death
+        and h4_ema_bear
         and h1_rsi_short_ok and h1_price_below_ema20
     )
 
