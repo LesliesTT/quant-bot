@@ -5,6 +5,7 @@ Discord 通知模块（Bybit 合约版）
 """
 
 import logging
+import time
 import requests
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -23,11 +24,19 @@ def _send(payload: dict) -> None:
     if not DISCORD_WEBHOOK_URL or "YOUR_DISCORD" in DISCORD_WEBHOOK_URL:
         logger.warning("Discord Webhook未配置，跳过通知")
         return
-    try:
-        resp = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
-        resp.raise_for_status()
-    except Exception as e:
-        logger.error("Discord通知失败: %s", e)
+    for attempt in range(3):
+        try:
+            resp = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
+            if resp.status_code == 429:
+                wait = float(resp.json().get("retry_after", 1.0))
+                logger.warning("Discord限流，%.1fs后重试(第%d次)", wait, attempt + 1)
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            return
+        except Exception as e:
+            logger.error("Discord通知失败: %s", e)
+            return
 
 
 def _now_str() -> str:

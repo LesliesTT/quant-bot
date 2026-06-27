@@ -1,9 +1,12 @@
 from __future__ import annotations
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ── Bybit API（测试网）────────────────────────────────────────────────────────
-BYBIT_API_KEY    = os.getenv("BINANCE_API_KEY",    "YOUR_BYBIT_TESTNET_API_KEY")
-BYBIT_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY", "YOUR_BYBIT_TESTNET_SECRET_KEY")
+BYBIT_API_KEY    = os.getenv("BYBIT_API_KEY",    "")
+BYBIT_SECRET_KEY = os.getenv("BYBIT_SECRET_KEY", "")
 
 # 行情端点（Bybit主网，数据更完整）
 BYBIT_MARKET_BASE = "https://api.bybit.com"
@@ -11,7 +14,7 @@ BYBIT_MARKET_BASE = "https://api.bybit.com"
 BYBIT_TRADE_BASE  = "https://api-testnet.bybit.com"
 
 # ── Discord ──────────────────────────────────────────────────────────────────
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "YOUR_DISCORD_WEBHOOK_URL_HERE")
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 
 # ── 交易品种 ─────────────────────────────────────────────────────────────────
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]

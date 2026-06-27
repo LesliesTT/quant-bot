@@ -21,6 +21,7 @@ from config import (
     SYMBOLS, SCAN_INTERVAL_MINUTES,
     MAX_CONCURRENT_POSITIONS, DAILY_LOSS_LIMIT_PCT,
     TP1_CLOSE_RATIO, INITIAL_CAPITAL, LEVERAGE,
+    BYBIT_API_KEY, BYBIT_SECRET_KEY,
 )
 from market_data import fetch_klines, fetch_ticker_price
 from strategy import analyze
@@ -137,6 +138,9 @@ def scan_and_open(state: State) -> State:
     cap = current_capital(state)
     logger.info("🔍 扫描信号  资产=$%.2f  持仓=%d/%d", cap, len(state.positions), MAX_CONCURRENT_POSITIONS)
 
+    actual_balance = get_usdt_balance()
+    logger.info("  交易所实际余额: $%.2f", actual_balance)
+
     for sym in SYMBOLS:
         if sym in state.positions:
             logger.info("  %s 已持仓，跳过扫描", sym)
@@ -166,6 +170,10 @@ def scan_and_open(state: State) -> State:
 
             # ── 初始化合约设置 ────────────────────────────────────
             setup_symbol(sym)
+
+            if actual_balance < sig.position_usdt:
+                logger.warning("  %s 实际余额不足: 交易所$%.2f < 需要$%.2f，跳过开仓", sym, actual_balance, sig.position_usdt)
+                continue
 
             if sig.direction == "BUY":
                 logger.info("  🟢 %s 发出做多信号，准备开多仓  保证金=$%.2f", sym, sig.position_usdt)
@@ -244,6 +252,10 @@ def main() -> None:
     logger.info("  量化趋势跟踪机器人 v2 启动")
     logger.info("  策略：多时间框架趋势 | 合约模拟盘 | 双向交易 | %dx杠杆", LEVERAGE)
     logger.info("══════════════════════════════════════════════")
+
+    if not BYBIT_API_KEY or not BYBIT_SECRET_KEY:
+        logger.error("未设置 BYBIT_API_KEY / BYBIT_SECRET_KEY，请创建 .env 文件（参考 .env.example）")
+        sys.exit(1)
 
     # 初始化：启用对冲模式（双向持仓）
     enable_hedge_mode()

@@ -84,6 +84,12 @@ def analyze(
     available_capital: float,
 ) -> SignalResult:
 
+    if len(df_1d) < EMA_TREND or len(df_4h) < EMA_SLOW or len(df_1h) < EMA_SLOW:
+        price = float(df_1h["close"].iloc[-1]) if len(df_1h) > 0 else 0.0
+        return SignalResult(symbol=symbol, direction="NEUTRAL", stars=1, price=price,
+                            atr=0.0, sl=0.0, tp1=0.0, tp2=0.0, position_usdt=0.0, score=0,
+                            reasons=[f"⚠️ K线数据不足(1d:{len(df_1d)}/4h:{len(df_4h)}/1h:{len(df_1h)})，跳过分析"])
+
     price   = float(df_1h["close"].iloc[-1])
     atr_1h  = _atr(df_1h, ATR_PERIOD)
     atr_val = float(atr_1h.iloc[-1])

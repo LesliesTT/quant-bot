@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import requests
 import pandas as pd
 
@@ -98,7 +99,6 @@ def fetch_lot_size(symbol: str) -> tuple[float, float, int]:
         step_size = float(lot.get("qtyStep", "0.001"))
         min_qty   = float(lot.get("minOrderQty", "0.001"))
 
-        import math
         qty_prec = max(0, int(round(-math.log10(step_size)))) if step_size > 0 else 3
         return min_qty, step_size, qty_prec
     except Exception as e:
